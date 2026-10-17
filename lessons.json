@@ -1,0 +1,82 @@
+[
+    {
+        "id": 1001,
+        "subject": "Mathematics",
+        "location": "Curepipe",
+        "price": 500,
+        "spaces": 5,
+        "icon": "fa-solid fa-calculator"
+    },
+    {
+        "id": 1002,
+        "subject": "English",
+        "location": "Mahebourg",
+        "price": 400,
+        "spaces": 5,
+        "icon": "fa-solid fa-book"
+    },
+    {
+        "id": 1003,
+        "subject": "Science",
+        "location": "Rose Hill",
+        "price": 600,
+        "spaces": 5,
+        "icon": "fa-solid fa-flask"
+    },
+    {
+        "id": 1004,
+        "subject": "French",
+        "location": "Quatre Bornes",
+        "price": 450,
+        "spaces": 5,
+        "icon": "fa-solid fa-language"
+    },
+    {
+        "id": 1005,
+        "subject": "Computer Studies",
+        "location": "Port Louis",
+        "price": 650,
+        "spaces": 5,
+        "icon": "fa-solid fa-laptop"
+    },
+    {
+        "id": 1006,
+        "subject": "Art",
+        "location": "Moka",
+        "price": 350,
+        "spaces": 5,
+        "icon": "fa-solid fa-palette"
+    },
+    {
+        "id": 1007,
+        "subject": "Music",
+        "location": "Vacoas",
+        "price": 550,
+        "spaces": 5,
+        "icon": "fa-solid fa-music"
+    },
+    {
+        "id": 1008,
+        "subject": "Football",
+        "location": "Plaine Magnien",
+        "price": 300,
+        "spaces": 5,
+        "icon": "fa-solid fa-futbol"
+    },
+    {
+        "id": 1009,
+        "subject": "Drama",
+        "location": "Beau Bassin",
+        "price": 400,
+        "spaces": 5,
+        "icon": "fa-solid fa-masks-theater"
+    },
+    {
+        "id": 1010,
+        "subject": "Chess",
+        "location": "Blue Bay",
+        "price": 350,
+        "spaces": 5,
+        "icon": "fa-solid fa-chess"
+    }
+]

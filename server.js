@@ -1,7 +1,7 @@
 const path = require('path');
 const dns = require('node:dns');
 
-// Keep the DNS setting that worked on your computer.
+// DNS setting that worked on your computer.
 dns.setServers(['8.8.8.8']);
 
 require('dotenv').config({
@@ -10,13 +10,19 @@ require('dotenv').config({
 
 const express = require('express');
 const cors = require('cors');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+function requestError(status, message) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
 
 async function startServer() {
     const username = process.env.MONGODB_USERNAME;
@@ -47,13 +53,17 @@ async function startServer() {
         const lessonsCollection = db.collection('lessons');
         const ordersCollection = db.collection('orders');
 
+        await lessonsCollection.createIndex(
+            { id: 1 },
+            { unique: true }
+        );
+
         console.log(`Connected to MongoDB: ${database}`);
 
         app.get('/', (req, res) => {
             res.send('After-School Lessons backend is running.');
         });
 
-        // Read lessons from MongoDB.
         app.get('/lessons', async (req, res) => {
             try {
                 const lessons = await lessonsCollection
@@ -61,6 +71,7 @@ async function startServer() {
                     .sort({ id: 1 })
                     .toArray();
 
+                res.set('Cache-Control', 'no-store');
                 res.json(lessons);
             } catch (error) {
                 console.error('Error loading lessons:', error.message);
@@ -71,7 +82,6 @@ async function startServer() {
             }
         });
 
-        // Validate and permanently save an order.
         app.post('/orders', async (req, res) => {
             const { name, phone, lessonIds } = req.body || {};
 
@@ -94,40 +104,85 @@ async function startServer() {
                 });
             }
 
+            // Count how many spaces are requested for each lesson.
+            const quantities = new Map();
+
+            for (const id of lessonIds) {
+                quantities.set(id, (quantities.get(id) || 0) + 1);
+            }
+
+            const order = {
+                _id: new ObjectId(),
+                name,
+                phone,
+                lessonIds: [...lessonIds],
+                spaces: lessonIds.length,
+                createdAt: new Date()
+            };
+
             try {
-                // Repeated IDs represent multiple spaces for one lesson.
-                const uniqueIds = [...new Set(lessonIds)];
+                await client.withSession(async session => {
+                    await session.withTransaction(async () => {
+                        // Run transaction operations sequentially.
+                        for (const [id, quantity] of quantities) {
+                            const lesson = await lessonsCollection.findOne(
+                                { id },
+                                { session }
+                            );
 
-                const matchingLessons = await lessonsCollection
-                    .find(
-                        { id: { $in: uniqueIds } },
-                        { projection: { _id: 0, id: 1 } }
-                    )
-                    .toArray();
+                            if (!lesson) {
+                                throw requestError(
+                                    400,
+                                    `Lesson ${id} does not exist.`
+                                );
+                            }
 
-                const existingIds = new Set(
-                    matchingLessons.map(lesson => lesson.id)
-                );
+                            if (
+                                !Number.isInteger(lesson.spaces) ||
+                                lesson.spaces < quantity
+                            ) {
+                                throw requestError(
+                                    409,
+                                    `Not enough spaces for ${lesson.subject}.`
+                                );
+                            }
 
-                if (!uniqueIds.every(id => existingIds.has(id))) {
-                    return res.status(400).json({
-                        message: 'One or more lesson IDs do not exist.'
+                            // Only reduce spaces if enough remain.
+                            const result =
+                                await lessonsCollection.updateOne(
+                                    {
+                                        id,
+                                        spaces: { $gte: quantity }
+                                    },
+                                    {
+                                        $inc: { spaces: -quantity }
+                                    },
+                                    { session }
+                                );
+
+                            if (result.modifiedCount !== 1) {
+                                throw requestError(
+                                    409,
+                                    `Availability changed for ${lesson.subject}.`
+                                );
+                            }
+                        }
+
+                        // The order and space changes commit together.
+                        await ordersCollection.insertOne(order, {
+                            session
+                        });
+                    }, {
+                        readPreference: 'primary',
+                        readConcern: { level: 'snapshot' },
+                        writeConcern: { w: 'majority' }
                     });
-                }
-
-                const order = {
-                    name,
-                    phone,
-                    lessonIds: [...lessonIds],
-                    spaces: lessonIds.length
-                };
-
-                const result = await ordersCollection.insertOne(order);
+                });
 
                 res.status(201).json({
                     message: 'Order received successfully.',
                     order: {
-                        id: result.insertedId.toString(),
+                        id: order._id.toString(),
                         name: order.name,
                         phone: order.phone,
                         lessonIds: order.lessonIds,
@@ -137,13 +192,19 @@ async function startServer() {
             } catch (error) {
                 console.error('Error saving order:', error.message);
 
-                res.status(500).json({
-                    message: 'Could not confirm your order. Please try again.'
+                const status =
+                    error.status === 400 || error.status === 409
+                        ? error.status
+                        : 500;
+
+                res.status(status).json({
+                    message: status === 500
+                        ? 'Could not confirm your order.'
+                        : error.message
                 });
             }
         });
 
-        // Return JSON for malformed JSON request bodies.
         app.use((error, req, res, next) => {
             if (error.type === 'entity.parse.failed') {
                 return res.status(400).json({
@@ -168,7 +229,6 @@ async function startServer() {
             await client.close();
         });
 
-        // Close the database connection when stopping the server.
         let stopping = false;
 
         function shutdown() {
@@ -181,7 +241,10 @@ async function startServer() {
                 try {
                     await client.close();
                 } catch (error) {
-                    console.error('Error closing MongoDB:', error.message);
+                    console.error(
+                        'Error closing MongoDB:',
+                        error.message
+                    );
                     process.exitCode = 1;
                 }
             });
@@ -190,7 +253,7 @@ async function startServer() {
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
     } catch (error) {
-        console.error('MongoDB connection failed:', error.message);
+        console.error('Startup failed:', error.message);
         process.exitCode = 1;
         await client.close();
     }

@@ -1,7 +1,6 @@
 const path = require('path');
 const dns = require('node:dns');
 
-// DNS setting that worked on your computer.
 dns.setServers(['8.8.8.8']);
 
 require('dotenv').config({
@@ -64,6 +63,7 @@ async function startServer() {
             res.send('After-School Lessons backend is running.');
         });
 
+        // GET: retrieve all lessons.
         app.get('/lessons', async (req, res) => {
             try {
                 const lessons = await lessonsCollection
@@ -82,6 +82,128 @@ async function startServer() {
             }
         });
 
+        // PUT: update one or more editable lesson attributes.
+        app.put('/lessons/:id', async (req, res) => {
+            const id = Number(req.params.id);
+
+            if (
+                !/^[0-9]+$/.test(req.params.id) ||
+                !Number.isSafeInteger(id)
+            ) {
+                return res.status(400).json({
+                    message: 'Lesson ID must be a valid integer.'
+                });
+            }
+
+            const body = req.body;
+
+            if (
+                !body ||
+                typeof body !== 'object' ||
+                Array.isArray(body)
+            ) {
+                return res.status(400).json({
+                    message: 'Provide a JSON object containing lesson updates.'
+                });
+            }
+
+            const allowedFields = [
+                'subject',
+                'location',
+                'price',
+                'spaces',
+                'icon'
+            ];
+
+            const fields = Object.keys(body);
+
+            if (
+                fields.length === 0 ||
+                fields.some(field => !allowedFields.includes(field))
+            ) {
+                return res.status(400).json({
+                    message:
+                        'Provide at least one of: subject, location, ' +
+                        'price, spaces or icon. Other fields are not allowed.'
+                });
+            }
+
+            const updates = {};
+
+            for (const field of fields) {
+                const value = body[field];
+
+                if (
+                    field === 'subject' ||
+                    field === 'location' ||
+                    field === 'icon'
+                ) {
+                    if (
+                        typeof value !== 'string' ||
+                        value.trim().length === 0
+                    ) {
+                        return res.status(400).json({
+                            message: `${field} must be a non-empty string.`
+                        });
+                    }
+
+                    updates[field] = value.trim();
+                }
+
+                if (field === 'price') {
+                    if (
+                        typeof value !== 'number' ||
+                        !Number.isFinite(value) ||
+                        value < 0
+                    ) {
+                        return res.status(400).json({
+                            message: 'Price must be a non-negative number.'
+                        });
+                    }
+
+                    updates.price = value;
+                }
+
+                if (field === 'spaces') {
+                    if (!Number.isSafeInteger(value) || value < 0) {
+                        return res.status(400).json({
+                            message: 'Spaces must be a non-negative integer.'
+                        });
+                    }
+
+                    updates.spaces = value;
+                }
+            }
+
+            try {
+                const result = await lessonsCollection.updateOne(
+                    { id },
+                    { $set: updates }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        message: 'Lesson not found.'
+                    });
+                }
+
+                // An unchanged value is still a successful request.
+                res.json({
+                    message: 'Lesson updated successfully.',
+                    id,
+                    updatedFields: updates,
+                    modified: result.modifiedCount === 1
+                });
+            } catch (error) {
+                console.error('Error updating lesson:', error.message);
+
+                res.status(500).json({
+                    message: 'Could not update the lesson.'
+                });
+            }
+        });
+
+        // POST: save an order and reduce spaces together.
         app.post('/orders', async (req, res) => {
             const { name, phone, lessonIds } = req.body || {};
 
@@ -104,7 +226,6 @@ async function startServer() {
                 });
             }
 
-            // Count how many spaces are requested for each lesson.
             const quantities = new Map();
 
             for (const id of lessonIds) {
@@ -123,7 +244,6 @@ async function startServer() {
             try {
                 await client.withSession(async session => {
                     await session.withTransaction(async () => {
-                        // Run transaction operations sequentially.
                         for (const [id, quantity] of quantities) {
                             const lesson = await lessonsCollection.findOne(
                                 { id },
@@ -147,7 +267,6 @@ async function startServer() {
                                 );
                             }
 
-                            // Only reduce spaces if enough remain.
                             const result =
                                 await lessonsCollection.updateOne(
                                     {
@@ -168,7 +287,6 @@ async function startServer() {
                             }
                         }
 
-                        // The order and space changes commit together.
                         await ordersCollection.insertOne(order, {
                             session
                         });

@@ -1,6 +1,7 @@
-const path = require('path');
+const path = require('node:path');
 const dns = require('node:dns');
 
+// Use the DNS resolver that worked for your local Atlas connection.
 dns.setServers(['8.8.8.8']);
 
 require('dotenv').config({
@@ -14,6 +15,14 @@ const { MongoClient, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Request logger: print the time, HTTP method and requested URL.
+app.use((req, res, next) => {
+    console.log(
+        `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
+    );
+    next();
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -21,20 +30,6 @@ function requestError(status, message) {
     const error = new Error(message);
     error.status = status;
     return error;
-}
-
-function sendError(res, error) {
-    console.error(error.message);
-
-    const status = [400, 404, 409].includes(error.status)
-        ? error.status
-        : 500;
-
-    res.status(status).json({
-        message: status === 500
-            ? 'The request could not be completed. Please check its status.'
-            : error.message
-    });
 }
 
 function publicOrder(order) {
@@ -48,16 +43,67 @@ function publicOrder(order) {
     };
 }
 
+function countSpacesByLesson(lessonIds) {
+    const quantities = new Map();
+
+    for (const id of lessonIds) {
+        quantities.set(id, (quantities.get(id) || 0) + 1);
+    }
+
+    return quantities;
+}
+
+function validateLessonUpdates(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw requestError(400, 'Provide a JSON object.');
+    }
+
+    const allowed = ['subject', 'location', 'price', 'spaces', 'icon'];
+    const fields = Object.keys(body);
+
+    if (!fields.length || fields.some(field => !allowed.includes(field))) {
+        throw requestError(
+            400,
+            'Update subject, location, price, spaces or icon only.'
+        );
+    }
+
+    const updates = {};
+
+    for (const field of fields) {
+        const value = body[field];
+
+        if (field === 'spaces') {
+            if (!Number.isSafeInteger(value) || value < 0) {
+                throw requestError(400, 'Spaces must be a non-negative integer.');
+            }
+            updates.spaces = value;
+        } else if (field === 'price') {
+            if (!Number.isFinite(value) || value < 0) {
+                throw requestError(400, 'Price must be a non-negative number.');
+            }
+            updates.price = value;
+        } else {
+            if (typeof value !== 'string' || !value.trim()) {
+                throw requestError(400, `${field} must be a non-empty string.`);
+            }
+            updates[field] = value.trim();
+        }
+    }
+
+    return updates;
+}
+
 async function startServer() {
-    const username = process.env.MONGODB_USERNAME;
-    const password = process.env.MONGODB_PASSWORD;
-    const host = process.env.MONGODB_HOST;
-    const database = process.env.MONGODB_DATABASE;
+    const {
+        MONGODB_USERNAME: username,
+        MONGODB_PASSWORD: password,
+        MONGODB_HOST: host,
+        MONGODB_DATABASE: database
+    } = process.env;
 
     if (!username || !password || !host || !database) {
-        console.error('Missing MongoDB settings in config.env.');
-        process.exitCode = 1;
-        return;
+        throw new Error('Missing MongoDB settings in config.env.');
     }
 
     const uri =
@@ -70,13 +116,11 @@ async function startServer() {
 
     try {
         await client.connect();
-
         const db = client.db(database);
         await db.command({ ping: 1 });
 
         const lessons = db.collection('lessons');
         const orders = db.collection('orders');
-
         await lessons.createIndex({ id: 1 }, { unique: true });
 
         console.log(`Connected to MongoDB: ${database}`);
@@ -85,111 +129,32 @@ async function startServer() {
             res.send('After-School Lessons backend is running.');
         });
 
-        // Return the current lesson data.
-        app.get('/lessons', async (req, res) => {
+        app.get('/lessons', async (req, res, next) => {
             try {
                 const result = await lessons
                     .find({}, { projection: { _id: 0 } })
                     .sort({ id: 1 })
                     .toArray();
 
-                res.set('Cache-Control', 'no-store');
-                res.json(result);
+                res.set('Cache-Control', 'no-store').json(result);
             } catch (error) {
-                sendError(res, error);
+                next(error);
             }
         });
 
-        // Update editable attributes of one lesson.
-        app.put('/lessons/:id', async (req, res) => {
+        // Set one or more lesson attributes, including an absolute space count.
+        app.put('/lessons/:id', async (req, res, next) => {
             try {
                 const id = Number(req.params.id);
 
-                if (
-                    !/^[0-9]+$/.test(req.params.id) ||
-                    !Number.isSafeInteger(id)
-                ) {
+                if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(id)) {
                     throw requestError(400, 'Invalid lesson ID.');
                 }
 
-                const body = req.body;
+                const updates = validateLessonUpdates(req.body);
+                const result = await lessons.updateOne({ id }, { $set: updates });
 
-                if (
-                    !body ||
-                    typeof body !== 'object' ||
-                    Array.isArray(body)
-                ) {
-                    throw requestError(400, 'Provide a JSON object.');
-                }
-
-                const allowed = [
-                    'subject', 'location', 'price', 'spaces', 'icon'
-                ];
-
-                const fields = Object.keys(body);
-
-                if (
-                    fields.length === 0 ||
-                    fields.some(field => !allowed.includes(field))
-                ) {
-                    throw requestError(
-                        400,
-                        'Update subject, location, price, spaces or icon only.'
-                    );
-                }
-
-                const updates = {};
-
-                for (const field of fields) {
-                    const value = body[field];
-
-                    if (['subject', 'location', 'icon'].includes(field)) {
-                        if (
-                            typeof value !== 'string' ||
-                            !value.trim()
-                        ) {
-                            throw requestError(
-                                400,
-                                `${field} must be a non-empty string.`
-                            );
-                        }
-
-                        updates[field] = value.trim();
-                    }
-
-                    if (field === 'price') {
-                        if (
-                            typeof value !== 'number' ||
-                            !Number.isFinite(value) ||
-                            value < 0
-                        ) {
-                            throw requestError(
-                                400,
-                                'Price must be a non-negative number.'
-                            );
-                        }
-
-                        updates.price = value;
-                    }
-
-                    if (field === 'spaces') {
-                        if (!Number.isSafeInteger(value) || value < 0) {
-                            throw requestError(
-                                400,
-                                'Spaces must be a non-negative integer.'
-                            );
-                        }
-
-                        updates.spaces = value;
-                    }
-                }
-
-                const result = await lessons.updateOne(
-                    { id },
-                    { $set: updates }
-                );
-
-                if (result.matchedCount === 0) {
+                if (!result.matchedCount) {
                     throw requestError(404, 'Lesson not found.');
                 }
 
@@ -200,49 +165,33 @@ async function startServer() {
                     modified: result.modifiedCount === 1
                 });
             } catch (error) {
-                sendError(res, error);
+                next(error);
             }
         });
 
-        // Save an order first. Spaces are changed by the PUT route.
-        app.post('/orders', async (req, res) => {
+        // Step 1: save the order. A pending order does not reserve spaces.
+        app.post('/orders', async (req, res, next) => {
             try {
                 const { name, phone, lessonIds } = req.body || {};
 
-                const validName =
-                    typeof name === 'string' &&
-                    /^[A-Za-z]+$/.test(name);
-
-                const validPhone =
-                    typeof phone === 'string' &&
-                    /^[0-9]+$/.test(phone);
-
-                const validIds =
-                    Array.isArray(lessonIds) &&
-                    lessonIds.length > 0 &&
-                    lessonIds.every(id => Number.isSafeInteger(id));
-
-                if (!validName || !validPhone || !validIds) {
+                if (
+                    typeof name !== 'string' || !/^[A-Za-z]+$/.test(name) ||
+                    typeof phone !== 'string' || !/^[0-9]+$/.test(phone) ||
+                    !Array.isArray(lessonIds) || !lessonIds.length ||
+                    !lessonIds.every(Number.isSafeInteger)
+                ) {
                     throw requestError(
-                        400,
-                        'Provide a valid name, phone and lesson IDs.'
+                        400, 'Provide a valid name, phone and lesson IDs.'
                     );
                 }
 
                 const uniqueIds = [...new Set(lessonIds)];
+                const found = await lessons.countDocuments({
+                    id: { $in: uniqueIds }
+                });
 
-                const found = await lessons
-                    .find(
-                        { id: { $in: uniqueIds } },
-                        { projection: { id: 1 } }
-                    )
-                    .toArray();
-
-                if (found.length !== uniqueIds.length) {
-                    throw requestError(
-                        400,
-                        'One or more lessons do not exist.'
-                    );
+                if (found !== uniqueIds.length) {
+                    throw requestError(400, 'One or more lessons do not exist.');
                 }
 
                 const order = {
@@ -256,19 +205,17 @@ async function startServer() {
                 };
 
                 await orders.insertOne(order);
-
                 res.status(201).json({
                     message: 'Order saved; availability confirmation required.',
                     order: publicOrder(order)
                 });
             } catch (error) {
-                sendError(res, error);
+                next(error);
             }
         });
 
-        // Set absolute space counts after an order has been submitted.
-        // All lesson updates and order confirmation succeed together.
-        app.put('/orders/:id/confirm', async (req, res) => {
+        // Step 2: update every booked lesson and confirm the order together.
+        app.put('/orders/:id/confirm', async (req, res, next) => {
             try {
                 if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
                     throw requestError(400, 'Invalid order ID.');
@@ -278,201 +225,144 @@ async function startServer() {
                 const updates = req.body?.lessonUpdates;
 
                 if (
-                    !Array.isArray(updates) ||
-                    updates.length === 0 ||
-                    !updates.every(update =>
-                        update &&
-                        Number.isSafeInteger(update.id) &&
-                        Number.isSafeInteger(update.spaces) &&
-                        update.spaces >= 0
+                    !Array.isArray(updates) || !updates.length ||
+                    !updates.every(item =>
+                        item && Number.isSafeInteger(item.id) &&
+                        Number.isSafeInteger(item.spaces) && item.spaces >= 0
                     )
                 ) {
                     throw requestError(
-                        400,
-                        'Provide lessonUpdates with lesson IDs and remaining spaces.'
+                        400, 'Provide lesson IDs and non-negative remaining spaces.'
                     );
                 }
 
-                const updateMap = new Map(
-                    updates.map(update => [update.id, update.spaces])
+                const remainingById = new Map(
+                    updates.map(item => [item.id, item.spaces])
                 );
 
-                if (updateMap.size !== updates.length) {
-                    throw requestError(
-                        400,
-                        'Each lesson must appear only once in lessonUpdates.'
-                    );
+                if (remainingById.size !== updates.length) {
+                    throw requestError(400, 'Include each lesson only once.');
                 }
 
-                const confirmedOrder = await client.withSession(
-                    async session => {
-                        return session.withTransaction(async () => {
-                            const order = await orders.findOne(
-                                { _id: orderId },
+                const confirmed = await client.withSession(session =>
+                    session.withTransaction(async () => {
+                        const order = await orders.findOne(
+                            { _id: orderId }, { session }
+                        );
+
+                        if (!order) throw requestError(404, 'Order not found.');
+
+                        // Retrying this PUT must not deduct the spaces again.
+                        if (order.status === 'confirmed') return publicOrder(order);
+
+                        if (order.status !== 'pending') {
+                            throw requestError(409, 'This order cannot be confirmed.');
+                        }
+
+                        const quantities = countSpacesByLesson(order.lessonIds);
+
+                        if (
+                            quantities.size !== remainingById.size ||
+                            [...quantities.keys()].some(id => !remainingById.has(id))
+                        ) {
+                            throw requestError(
+                                400, 'Updates must match the lessons in the order.'
+                            );
+                        }
+
+                        for (const [id, quantity] of quantities) {
+                            const remaining = remainingById.get(id);
+
+                            // Example: to book 2 and leave 3, the DB must still have 5.
+                            const result = await lessons.updateOne(
+                                { id, spaces: remaining + quantity },
+                                { $set: { spaces: remaining } },
                                 { session }
                             );
 
-                            if (!order) {
-                                throw requestError(404, 'Order not found.');
-                            }
-
-                            // A repeated confirmation must not deduct again.
-                            if (order.status === 'confirmed') {
-                                return publicOrder(order);
-                            }
-
-                            if (order.status !== 'pending') {
+                            if (result.modifiedCount !== 1) {
                                 throw requestError(
                                     409,
-                                    'This order cannot be confirmed by this route.'
+                                    `Availability changed for lesson ${id}. Refresh and try again.`
                                 );
                             }
+                        }
 
-                            const quantities = new Map();
+                        await orders.updateOne(
+                            { _id: orderId, status: 'pending' },
+                            { $set: { status: 'confirmed', confirmedAt: new Date() } },
+                            { session }
+                        );
 
-                            for (const id of order.lessonIds) {
-                                quantities.set(
-                                    id,
-                                    (quantities.get(id) || 0) + 1
-                                );
-                            }
-
-                            if (
-                                quantities.size !== updateMap.size ||
-                                [...quantities.keys()].some(
-                                    id => !updateMap.has(id)
-                                )
-                            ) {
-                                throw requestError(
-                                    400,
-                                    'Updates must match the lessons in the order.'
-                                );
-                            }
-
-                            for (const [id, quantity] of quantities) {
-                                const lesson = await lessons.findOne(
-                                    { id },
-                                    { session }
-                                );
-
-                                if (!lesson) {
-                                    throw requestError(
-                                        409,
-                                        `Lesson ${id} is no longer available.`
-                                    );
-                                }
-
-                                if (
-                                    !Number.isSafeInteger(lesson.spaces) ||
-                                    lesson.spaces < quantity
-                                ) {
-                                    throw requestError(
-                                        409,
-                                        `Not enough spaces for ${lesson.subject}.`
-                                    );
-                                }
-
-                                const remaining = updateMap.get(id);
-
-                                // Reject stale or incorrect client calculations.
-                                if (remaining !== lesson.spaces - quantity) {
-                                    throw requestError(
-                                        409,
-                                        'Availability changed. Refresh it before confirming.'
-                                    );
-                                }
-
-                                const result = await lessons.updateOne(
-                                    { id, spaces: lesson.spaces },
-                                    { $set: { spaces: remaining } },
-                                    { session }
-                                );
-
-                                if (result.modifiedCount !== 1) {
-                                    throw requestError(
-                                        409,
-                                        'Availability changed. Please refresh it.'
-                                    );
-                                }
-                            }
-
-                            await orders.updateOne(
-                                { _id: orderId, status: 'pending' },
-                                {
-                                    $set: {
-                                        status: 'confirmed',
-                                        confirmedAt: new Date()
-                                    }
-                                },
-                                { session }
-                            );
-
-                            return publicOrder({
-                                ...order,
-                                status: 'confirmed'
-                            });
-                        }, {
-                            readPreference: 'primary',
-                            readConcern: { level: 'snapshot' },
-                            writeConcern: { w: 'majority' }
-                        });
-                    }
+                        return publicOrder({ ...order, status: 'confirmed' });
+                    }, {
+                        readPreference: 'primary',
+                        readConcern: { level: 'snapshot' },
+                        writeConcern: { w: 'majority' }
+                    })
                 );
 
                 res.json({
                     message: 'Order confirmed and lesson spaces updated.',
-                    order: confirmedOrder
+                    order: confirmed
                 });
             } catch (error) {
-                sendError(res, error);
+                next(error);
             }
         });
 
+        // Express recognises an error handler by its four parameters.
         app.use((error, req, res, next) => {
+            if (res.headersSent) return next(error);
+
             if (error.type === 'entity.parse.failed') {
                 return res.status(400).json({
                     message: 'Request body must contain valid JSON.'
                 });
             }
 
-            sendError(res, error);
+            console.error(error.message);
+            const status = [400, 404, 409, 413].includes(error.status)
+                ? error.status
+                : 500;
+
+            res.status(status).json({
+                message: status === 500
+                    ? 'The request could not be completed. Please check its status.'
+                    : error.message
+            });
         });
 
-        const server = app.listen(port, () => {
+        const server = app.listen(port);
+
+        server.once('listening', () => {
             console.log(`Server running on port ${port}`);
         });
 
-        server.on('error', async error => {
+        server.once('error', async error => {
             console.error('Server failed to start:', error.message);
             process.exitCode = 1;
             await client.close();
         });
 
         let stopping = false;
-
         function shutdown() {
             if (stopping) return;
             stopping = true;
-
-            console.log('\nStopping server...');
-
             server.close(async () => {
-                try {
-                    await client.close();
-                } catch (error) {
-                    console.error(error.message);
-                    process.exitCode = 1;
-                }
+                await client.close();
             });
         }
 
-        process.on('SIGINT', shutdown);
-        process.on('SIGTERM', shutdown);
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
     } catch (error) {
-        console.error('Startup failed:', error.message);
-        process.exitCode = 1;
         await client.close();
+        throw error;
     }
 }
 
-startServer();
+startServer().catch(error => {
+    console.error('Startup failed:', error.message);
+    process.exitCode = 1;
+});

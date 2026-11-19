@@ -25,6 +25,11 @@ app.use((req, res, next) => {
 
 app.use(cors());
 app.use(express.json());
+app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
+
+app.use('/images', (req, res) => {
+    res.status(404).json({ message: 'Lesson image not found.' });
+});
 
 function requestError(status, message) {
     const error = new Error(message);

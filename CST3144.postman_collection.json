@@ -80,6 +80,14 @@
                                                   "mode":  "raw"
                                               }
                                  }
+                 },
+                 {
+                     "name":  "Search lessons by location",
+                     "request":  {
+                                     "method":  "GET",
+                                     "url":  "https://m01003462-after-school.onrender.com/lessons?q=moka",
+                                     "description":  "Search by location. For Moka, expect only Art (lesson 1006)."
+                                 }
                  }
              ]
 }

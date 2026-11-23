@@ -1,0 +1,85 @@
+{
+    "info":  {
+                 "description":  "Confirm order uses the already confirmed Chess test order. For a new booking, use the order ID returned by Create order and the updated remaining space count.",
+                 "name":  "CST3144 After-School Lessons API",
+                 "schema":  "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+             },
+    "item":  [
+                 {
+                     "name":  "List all lessons",
+                     "request":  {
+                                     "method":  "GET",
+                                     "url":  "https://m01003462-after-school.onrender.com/lessons",
+                                     "header":  [
+
+                                                ]
+                                 }
+                 },
+                 {
+                     "name":  "Create order",
+                     "request":  {
+                                     "method":  "POST",
+                                     "url":  "https://m01003462-after-school.onrender.com/orders",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ],
+                                     "body":  {
+                                                  "raw":  "{\"name\":\"PostmanTest\",\"phone\":\"12345678\",\"lessonIds\":[1010]}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              }
+                                 }
+                 },
+                 {
+                     "name":  "Update lesson",
+                     "request":  {
+                                     "method":  "PUT",
+                                     "url":  "https://m01003462-after-school.onrender.com/lessons/1010",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ],
+                                     "body":  {
+                                                  "raw":  "{\"price\":350}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              }
+                                 }
+                 },
+                 {
+                     "name":  "Confirm order",
+                     "request":  {
+                                     "method":  "PUT",
+                                     "url":  "https://m01003462-after-school.onrender.com/orders/6b0021f4741249b19ce309e9/confirm",
+                                     "header":  [
+                                                    {
+                                                        "key":  "Content-Type",
+                                                        "value":  "application/json"
+                                                    }
+                                                ],
+                                     "body":  {
+                                                  "raw":  "{\"lessonUpdates\":[{\"id\":1010,\"spaces\":3}]}",
+                                                  "options":  {
+                                                                  "raw":  {
+                                                                              "language":  "json"
+                                                                          }
+                                                              },
+                                                  "mode":  "raw"
+                                              }
+                                 }
+                 }
+             ]
+}

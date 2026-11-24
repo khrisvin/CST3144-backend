@@ -158,6 +158,26 @@ async function startServer() {
                 next(error);
             }
         });
+                app.get('/teachers', async (req, res, next) => {
+            try {
+                const teachers = await db.collection('teachers')
+                    .find({}, {
+                        projection: {
+                            _id: 0,
+                            id: 1,
+                            firstName: 1,
+                            lastName: 1,
+                            lessonIds: 1
+                        }
+                    })
+                    .sort({ lastName: 1, firstName: 1 })
+                    .toArray();
+
+                res.json(teachers);
+            } catch (error) {
+                next(error);
+            }
+        });
                 // Count purchased spaces for one lesson across confirmed orders.
         app.get('/enrolment/:lessonid', async (req, res, next) => {
             try {

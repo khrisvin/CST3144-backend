@@ -88,6 +88,20 @@
                                      "url":  "https://m01003462-after-school.onrender.com/lessons?q=moka",
                                      "description":  "Search by location. For Moka, expect only Art (lesson 1006)."
                                  }
+                 },
+                 {
+                     "name":  "List all teachers",
+                     "request":  {
+                                     "method":  "GET",
+                                     "url":  "https://m01003462-after-school.onrender.com/teachers"
+                                 }
+                 },
+                 {
+                     "name":  "Chess enrolment",
+                     "request":  {
+                                     "method":  "GET",
+                                     "url":  "https://m01003462-after-school.onrender.com/enrolment/1010"
+                                 }
                  }
              ]
 }

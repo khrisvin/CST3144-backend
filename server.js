@@ -158,6 +158,40 @@ async function startServer() {
                 next(error);
             }
         });
+                // Count purchased spaces for one lesson across confirmed orders.
+        app.get('/enrolment/:lessonid', async (req, res, next) => {
+            try {
+                const rawId = req.params.lessonid;
+                const lessonId = Number(rawId);
+
+                if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(lessonId)) {
+                    throw requestError(400, 'Invalid lesson ID.');
+                }
+
+                const lesson = await lessons.findOne(
+                    { id: lessonId },
+                    { projection: { _id: 1 } }
+                );
+
+                if (!lesson) {
+                    throw requestError(404, 'Lesson not found.');
+                }
+
+                const [result] = await orders.aggregate([
+                    { $match: { status: 'confirmed', lessonIds: lessonId } },
+                    { $unwind: '$lessonIds' },
+                    { $match: { lessonIds: lessonId } },
+                    { $count: 'enrolment' }
+                ]).toArray();
+
+                res.set('Cache-Control', 'no-store').json({
+                    lessonId,
+                    enrolment: result?.enrolment ?? 0
+                });
+            } catch (error) {
+                next(error);
+            }
+        });
 
         app.put('/lessons/:id', async (req, res, next) => {
             try {

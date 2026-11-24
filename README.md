@@ -115,3 +115,11 @@ Import `CST3144.postman_collection.json` into Postman. It contains five saved re
 To test without changing data, run **Search lessons by location**. Expect `200 OK` and one lesson: **Art**, ID `1006`, location **Moka**.
 
 To test a new booking, run **Create order** first. Use the new order ID in **Confirm order** and calculate the remaining spaces from the latest catalogue response. Confirming a booking against the live API changes the live database.
+## Teachers and enrolment
+
+| Method | Route | What it returns |
+| --- | --- | --- |
+| GET | `/teachers` | Lists teachers with their names and the lesson IDs they teach. |
+| GET | `/enrolment/:id` | Returns the number of confirmed spaces booked for the lesson ID. Pending orders do not count. |
+
+Try the live API: [List all teachers](https://m01003462-after-school.onrender.com/teachers) or [Check Chess enrolment](https://m01003462-after-school.onrender.com/enrolment/1010).
